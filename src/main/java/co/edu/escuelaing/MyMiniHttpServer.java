@@ -14,7 +14,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MyMiniHttpServer {
-    // dos atributos
     private final static String WEBROOT = "webroot";
     private final static Map<String, String> CONTENT_TYPE = Map.of(
             "html", "text/html",
@@ -27,14 +26,8 @@ public class MyMiniHttpServer {
     private static volatile boolean running = true;
     private static ServerSocket serverSocket;
 
-
-
-
     public static void main(String[] args) throws IOException {
         int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
-
-        // Pool de hilos: ahora varias peticiones se atienden EN PARALELO,
-        // a diferencia del servidor secuencial del Día 1.
         ExecutorService pool = Executors.newFixedThreadPool(10);
 
         serverSocket = new ServerSocket(port);
@@ -56,8 +49,6 @@ public class MyMiniHttpServer {
                     }
                 });
             } catch (IOException e) {
-                // Si running ya es false, esta excepción la causó a propósito
-                // el cierre del serverSocket dentro de handleShutdown().
                 if (running) {
                     System.out.println("Error aceptando conexión: " + e.getMessage());
                 }
@@ -68,83 +59,77 @@ public class MyMiniHttpServer {
         System.out.println("Servidor detenido de forma ordenada.");
     }
 
-
-    private static void handleRequest(Socket client) throws IOException{
-        BufferedReader in = new BufferedReader( new InputStreamReader(client.getInputStream()));
+    private static void handleRequest(Socket client) throws IOException {
+        BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
         OutputStream out = client.getOutputStream();
         String readLine = in.readLine();
 
-        if(readLine == null || readLine.isBlank()){
-            String statusText = "Bad Request";
-            sendResponse(out, 400, statusText, "text/plain; charset=utf-8", statusText.getBytes());
+        if (readLine == null || readLine.isBlank()) {
+            sendResponse(out, 400, "Bad Request", "text/plain; charset=utf-8", "Bad Request".getBytes());
             return;
         }
 
         String[] params = readLine.split(" ");
-        if(params.length < 2){
-            String statusText = "Bad Request";
-            sendResponse(out, 400, statusText, "text/plain; charset=utf-8", statusText.getBytes());
+        if (params.length < 2) {
+            sendResponse(out, 400, "Bad Request", "text/plain; charset=utf-8", "Bad Request".getBytes());
             return;
         }
 
         String method = params[0];
         String rawPath = params[1];
-        if(!method.equals("GET")){
-            String statusText = "Method Not Allowed";
-            sendResponse(out, 405, statusText, "text/plain; charset=utf-8", statusText.getBytes());
+        if (!method.equals("GET")) {
+            sendResponse(out, 405, "Method Not Allowed", "text/plain; charset=utf-8", "Method Not Allowed".getBytes());
             return;
         }
 
         String path = rawPath;
         String query = "";
         int qIndex = rawPath.indexOf('?');
-        if(qIndex != -1){
+        if (qIndex != -1) {
             path = rawPath.substring(0, qIndex);
             query = rawPath.substring(qIndex + 1);
         }
 
-        if (path.equals("/")){
+        if (path.equals("/")) {
             path = "/index.html";
         }
 
-        if (path.equals("/greeting")){
+        if (path.equals("/greeting")) {
             handleGreeting(out, query);
             return;
         }
 
-        if (path.equals("/square")){
+        if (path.equals("/square")) {
             handleSquare(out, query);
             return;
         }
 
-        if(path.equals("/servertime")){
+        if (path.equals("/servertime")) {
             handleServerTime(out);
             return;
         }
 
-        serveStaticFile(out, path);
-        if(path.equals("/shutdown")){
+        // MOVIDO: ahora se revisa ANTES del fallback estático,
+        // igual que las otras rutas dinámicas. Antes estaba después
+        // de serveStaticFile(out, path), lo que causaba doble respuesta.
+        if (path.equals("/shutdown")) {
             String appEnv = System.getenv().getOrDefault("APP_ENV", "development");
-
-            if(appEnv.equals("production")){
-                String statusText = "Not Found";
-                sendResponse(out, 404, statusText, "text/plain; charset=utf-8", statusText.getBytes());
+            if (appEnv.equals("production")) {
+                sendResponse(out, 404, "Not Found", "text/plain; charset=utf-8", "Not Found".getBytes());
                 return;
             }
-
             handleShutdown(out);
             return;
         }
 
-
+        serveStaticFile(out, path);
     }
 
-    private static void serveStaticFile(OutputStream out, String path) throws IOException{
+    private static void serveStaticFile(OutputStream out, String path) throws IOException {
         Path base = Paths.get(WEBROOT).toAbsolutePath().normalize();
         Path resolved = base.resolve("." + path).normalize();
-        if(!resolved.startsWith(base) || Files.isDirectory(resolved) || !Files.exists(resolved)){
-            String statusText = "Not Found";
-            sendResponse(out, 404, statusText, "text/plain; charset=utf-8", statusText.getBytes());
+        if (!resolved.startsWith(base) || Files.isDirectory(resolved) || !Files.exists(resolved)) {
+            sendResponse(out, 404, "Not Found", "text/plain; charset=utf-8", "Not Found".getBytes());
             return;
         }
 
@@ -154,37 +139,36 @@ public class MyMiniHttpServer {
         sendResponse(out, 200, "OK", contentType, filesByte);
     }
 
-    private static String getExtension(String filename){
+    private static String getExtension(String filename) {
         int dot = filename.lastIndexOf('.');
         return dot == -1 ? "" : filename.substring(dot + 1).toLowerCase();
     }
 
-    private static void sendResponse(OutputStream out, int code, String statusText, String contentType, byte[] body) throws IOException{
+    private static void sendResponse(OutputStream out, int code, String statusText, String contentType, byte[] body) throws IOException {
         String headers = "HTTP/1.1 " + code + " " + statusText + "\r\n" +
                 "Content-Type: " + contentType + "\r\n" +
                 "Content-Length: " + body.length + "\r\n" +
-                "Connection: close" + "\r\n" +
+                "Connection: close\r\n" +
                 "\r\n";
         out.write(headers.getBytes("UTF-8"));
         out.write(body);
         out.flush();
     }
 
-    private static String decode(String s){
+    private static String decode(String s) {
         try {
             return URLDecoder.decode(s, "UTF-8");
-        } catch (UnsupportedEncodingException e){
+        } catch (UnsupportedEncodingException e) {
             return s;
         }
     }
 
-    private static Map<String, String> parseQuery(String query){
+    private static Map<String, String> parseQuery(String query) {
         Map<String, String> params = new HashMap<>();
-        if(query == null || query.isBlank()){
+        if (query == null || query.isBlank()) {
             return params;
         }
-
-        for(String parts: query.split("&")){
+        for (String parts : query.split("&")) {
             String[] kv = parts.split("=", 2);
             String key = decode(kv[0]);
             String value = kv.length > 1 ? decode(kv[1]) : "";
@@ -196,48 +180,40 @@ public class MyMiniHttpServer {
     private static void handleGreeting(OutputStream out, String query) throws IOException {
         Map<String, String> params = parseQuery(query);
         String name = params.get("name");
-        if(name == null || name.isBlank()){
-            String statusText = "Bad Request";
-            sendResponse(out, 400, statusText, "text/plain; charset=utf-8", statusText.getBytes());
+        if (name == null || name.isBlank()) {
+            sendResponse(out, 400, "Bad Request", "text/plain; charset=utf-8", "Bad Request".getBytes());
             return;
         }
         String json = "{ \"message\" : \"Hola, " + escapeJson(name) + "!\"}";
         sendResponse(out, 200, "OK", "application/json; charset=utf-8", json.getBytes());
     }
 
-    private static String escapeJson(String s){
+    private static String escapeJson(String s) {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
-
-    private static void handleSquare(OutputStream out, String query) throws IOException{
+    private static void handleSquare(OutputStream out, String query) throws IOException {
         Map<String, String> params = parseQuery(query);
         String numberString = params.get("number");
         try {
             int number = Integer.parseInt(numberString);
             int numberSquare = number * number;
-            String json = "{ \"input\" : " + number + "," +
-                    "\"square\" : " + numberSquare + "}";
-
-
+            String json = "{ \"input\" : " + number + "," + "\"square\" : " + numberSquare + "}";
             sendResponse(out, 200, "OK", "application/json; charset=UTF-8", json.getBytes());
-        } catch (NumberFormatException e){
-            String statusText = "Bad Request";
-            sendResponse(out, 400, statusText, "text/plain; charset=UTF-8", statusText.getBytes());
+        } catch (NumberFormatException e) {
+            sendResponse(out, 400, "Bad Request", "text/plain; charset=UTF-8", "Bad Request".getBytes());
         }
-
     }
 
-    private static void handleServerTime(OutputStream out) throws IOException{
+    private static void handleServerTime(OutputStream out) throws IOException {
         LocalDateTime now = LocalDateTime.now();
         String json = "{\"serverTime\" : \"" + now + "\"}";
         sendResponse(out, 200, "OK", "application/json; charset=UTF-8", json.getBytes());
     }
 
-    private static void handleShutdown(OutputStream out) throws IOException{
+    private static void handleShutdown(OutputStream out) throws IOException {
         String statusText = "Server shutting down";
         sendResponse(out, 200, "OK", "text/plain; charset=utf-8", statusText.getBytes());
-
         running = false;
         serverSocket.close();
     }
