@@ -3,6 +3,7 @@ package co.edu.escuelaing;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URLDecoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -75,7 +76,7 @@ public class MyMiniHttpServer {
         }
 
         if (path.equals("/greeting")){
-            handleGreeting(quary);
+            handleGreeting(out, query);
         }
 
         serveStaticFile(out, path);
@@ -110,11 +111,55 @@ public class MyMiniHttpServer {
         return dot == -1 ?  "" : fileName.substring(dot + 1);
     }
 
-    private static Map<String, String> parseQuery(String query){
+    private static Map<String, String> parseQuery( String query){
         Map<String,String> params = new HashMap<>();
         if(query == null || query.isBlank()){
             return params;
         }
-        for ()
+        for (String pair : query.split("&")){
+            String[] kv = pair.split("=", 2);
+            String key = decode(kv[0]);
+            String value = kv.length > 1 ? decode(kv[1]) : "";
+            params.put(key,value);
+        }
+        return params;
+    }
+
+    private static String decode(String s){
+        try {
+            return URLDecoder.decode(s, "UTF-8");
+        } catch (UnsupportedEncodingException e){
+            return s;
+        }
+    }
+
+    private static void handleGreeting(OutputStream out, String quary) throws IOException {
+        Map<String, String> params = parseQuery(quary);
+        String name = params.get("name");
+        if(name == null || name.isBlank()){
+            String statusText = "Bad Request";
+            sendResponse(out, 400, statusText, "text/plain, UTF-8", statusText.getBytes());
+            return;
+        }
+
+        String json = "{\"message\" : \"Hola" + scapeJson(name) + "!\"}";
+        sendResponse(out, 200, "OK", "application/json", json.getBytes());
+    }
+
+    private static String scapeJson(String s){
+        return s.replace("\\", "\\\"").replace("\"","\\\"" );
+    }
+
+    private static void square(OutputStream out, String query) throws IOException{
+        Map<String, String> params = parseQuery(query);
+        try {
+            int number = Integer.parseInt(params.get("number"));
+            int squareNumber = number * number;
+            String json = "{\"number\" : " + number+ ", \"square\" : " + squareNumber +" }";
+        } catch (NumberFormatException e){
+            String statusText = "Bad Request";
+            sendResponse(out, 400, statusText, "text/plain, UTF-8", statusText.getBytes());
+
+        }
     }
 }
