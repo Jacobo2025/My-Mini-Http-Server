@@ -1,4 +1,4 @@
-package org.example;
+package co.edu.escuelaing;
 
 import java.io.*;
 import java.net.ServerSocket;
@@ -10,6 +10,8 @@ import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MyMiniHttpServer {
     // dos atributos
@@ -22,26 +24,50 @@ public class MyMiniHttpServer {
             "jpg", "image/jpeg",
             "jpeg", "image/jpeg"
     );
+    private static volatile boolean running = true;
+    private static ServerSocket serverSocket;
+
 
 
 
     public static void main(String[] args) throws IOException {
-        int port = 8080;
+        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
 
-        try (ServerSocket serverSocket = new ServerSocket(port)){
+        // Pool de hilos: ahora varias peticiones se atienden EN PARALELO,
+        // a diferencia del servidor secuencial del Día 1.
+        ExecutorService pool = Executors.newFixedThreadPool(10);
 
-            while(true){
-                try(Socket client = serverSocket.accept()){
+        serverSocket = new ServerSocket(port);
+        System.out.println("Servidor escuchando en puerto " + port);
 
-                    handleRequest(client);
-                } catch (IOException e){
-
-                    System.out.println("Error: " + e.getMessage());
-
+        while (running) {
+            try {
+                Socket client = serverSocket.accept();
+                pool.submit(() -> {
+                    try {
+                        handleRequest(client);
+                    } catch (IOException e) {
+                        System.out.println("Error manejando request: " + e.getMessage());
+                    } finally {
+                        try {
+                            client.close();
+                        } catch (IOException ignored) {
+                        }
+                    }
+                });
+            } catch (IOException e) {
+                // Si running ya es false, esta excepción la causó a propósito
+                // el cierre del serverSocket dentro de handleShutdown().
+                if (running) {
+                    System.out.println("Error aceptando conexión: " + e.getMessage());
                 }
             }
         }
+
+        pool.shutdown();
+        System.out.println("Servidor detenido de forma ordenada.");
     }
+
 
     private static void handleRequest(Socket client) throws IOException{
         BufferedReader in = new BufferedReader( new InputStreamReader(client.getInputStream()));
@@ -97,6 +123,18 @@ public class MyMiniHttpServer {
         }
 
         serveStaticFile(out, path);
+        if(path.equals("/shutdown")){
+            String appEnv = System.getenv().getOrDefault("APP_ENV", "development");
+
+            if(appEnv.equals("production")){
+                String statusText = "Not Found";
+                sendResponse(out, 404, statusText, "text/plain; charset=utf-8", statusText.getBytes());
+                return;
+            }
+
+            handleShutdown(out);
+            return;
+        }
 
 
     }
@@ -194,5 +232,13 @@ public class MyMiniHttpServer {
         LocalDateTime now = LocalDateTime.now();
         String json = "{\"serverTime\" : \"" + now + "\"}";
         sendResponse(out, 200, "OK", "application/json; charset=UTF-8", json.getBytes());
+    }
+
+    private static void handleShutdown(OutputStream out) throws IOException{
+        String statusText = "Server shutting down";
+        sendResponse(out, 200, "OK", "text/plain; charset=utf-8", statusText.getBytes());
+
+        running = false;
+        serverSocket.close();
     }
 }
